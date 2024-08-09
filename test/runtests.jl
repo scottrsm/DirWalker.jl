@@ -8,13 +8,13 @@ end
 
 @testset "DirWalker (Count files)" begin
 	# Create a directory iterator -- using the struct, DirItr.
-	d = DirItr(joinpath(@__DIR__, "../"); by_depth=true, ordered=true)
+	d = DirItr(joinpath(@__DIR__, "../"); dprune=[raw"\.git$", raw"^build$"], by_depth=true, ordered=true)
 
 	# Iterate over all files within the directory sub-tree.  
 	cnt = 0
 	for f in d
 		cnt += 1
 	end
-	@test cnt == 22
+	@test cnt == 11
 end
 

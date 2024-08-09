@@ -32,13 +32,14 @@ export DirItr
                             This function is used with the `sort` function's `by` argument.
 """
 struct DirItr
-	path::String       # Full path to the root directory.
-	by_depth::Bool     # How to do the search of the directory tree. 
-	                   # If `true`, by depth; otherwise, breadth-first search.
-	dprune::Regex      # A Regular Expression, used to avoid certain directories.
-	fprune::Regex      # A Regular Expression, used to avoid certain files.
-	ordered::Bool      # If `true`, order the files and directories.
-	order_by::Function # When sorting (`ordered=true`), use this function with the `sort` function's `by` argument.
+	path::String        # Full path to the root directory.
+	by_depth ::Bool     # How to do the search of the directory tree. 
+	                    # If `true`, by depth; otherwise, breadth-first search.
+	dprune   ::Regex    # A Regular Expression, used to avoid certain directories.
+	fprune   ::Regex    # A Regular Expression, used to avoid certain files.
+	ordered  ::Bool     # If `true`, order the files and directories.
+	order_dir::Symbol   # Order direction. One of: :asc (ascending), :desc (descending) .
+	order_by ::Function # When sorting (`ordered=true`), use this function with the `sort` function's `by` argument.
 end
 
 """
@@ -55,16 +56,18 @@ Outer constructor for DirItr.
                                        *directory* that matches any regular expression in the list.
 - `fprune=::AbstractVector{String}` -- A vector of regular expression strings. This iterator will by-pass each
                                        *file* that matches any regular expression in the list.
-- `ordered=true::Bool               -- If `true`, order the resulting files and directories.
-- `order_by=lowercase::Function     -- If `ordered` is `true`, order the resulting files and directories with
+- `ordered=true::Bool`              -- If `true`, order the resulting files and directories.
+- `order_dir::Symbol`               -- Order direction. One of: :asc (ascending), :desc (descending) .
+- `order_by=lowercase::Function`    -- If `ordered` is `true`, order the resulting files and directories with
                                        the sort using `order_by` as the sorting keyi: sort(...; by=`order_by`[,...])
 
 # Return
 `::DirItr`
 """
-function DirItr(p::String; by_depth::Bool=true, dprune::AbstractVector{String}=[raw"^\.git$", raw"\.github$"],
-		fprune::AbstractVector{String}=[raw"^$"], ordered::Bool=false, order_by::Function=lowercase) 
-	return DirItr(p, by_depth, Regex(join(dprune, "|")), Regex(join(fprune, "|")), ordered, order_by) 
+function DirItr(p::String; by_depth::Bool=true, dprune::AbstractVector{String}=[raw"^\.git$"],
+		fprune::AbstractVector{String}=[raw"^$"], ordered::Bool=true, order_dir::Symbol=:asc, order_by::Function=lowercase) 
+	in(order_dir, [:asc, :desc]) || throw(ValueError(order_dir, "Parameter `order_dir` should be one of: :asc, :desc"))
+	return DirItr(p, by_depth, Regex(join(dprune, "|")), Regex(join(fprune, "|")), ordered, order_dir, order_by) 
 end
 
 
@@ -77,6 +80,7 @@ function Base.show(io::IO, di::DirItr)
 		  \tdprune   = $(di.dprune)
 		  \tfprune   = $(di.fprune)
 		  \tordered  = $(di.ordered)
+		  \torder_dir= $(di.order_dir)
 		  \torder_by = $(di.order_by)
 		  """                         )
 end
@@ -113,9 +117,10 @@ function gather_files__(di::DirItr                    ,
 	end
 
 	# Order files and directories.
+	# (Sorted in the opposite way as the files will eventually be popped of a list.)
 	if di.ordered
-		sort!(nfiles, by=di.order_by, rev=true)
-		sort!(ndirs,  by=di.order_by, rev=true)
+		sort!(nfiles, by=di.order_by, rev=di.order_dir === :asc ? true : false)
+		sort!(ndirs,  by=di.order_by, rev=di.order_dir === :asc ? true : false)
 	end
 
 	# Append the directory path to the contents -- so they have absolute paths.
