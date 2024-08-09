@@ -15,6 +15,6 @@ end
 	for f in d
 		cnt += 1
 	end
-	@test cnt == 8
+	@test cnt == 22
 end
 
