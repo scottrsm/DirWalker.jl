@@ -1,7 +1,7 @@
 name = "DirWalker"
 uuid = "1a0cd672-5218-4b50-b7a8-cc4b8a5d9145"
 authors = ["R. Scott McIntire"]
-version = "0.1.3"
+version = "0.1.4"
 
 [deps]
 
