@@ -50,17 +50,14 @@ Outer constructor for DirItr.
 # Arguments
 - `path :: String`  -- The full path to the root directory.
 
-# Optional Arguments
-- `by_depth=true::Bool`             -- How to traverse the tree: depth-first, or breadth-first.
-- `dprune=::AbstractVector{String}` -- A vector of regular expression strings. This iterator will by-pass each
-                                       *directory* that matches any regular expression in the list.
-- `fprune=::AbstractVector{String}` -- A vector of regular expression strings. This iterator will by-pass each
-                                       *file* that matches any regular expression in the list.
-- `ordered=true::Bool`              -- If `true`, order the resulting files and directories.
-- `order_dir::Symbol`               -- Order direction. One of: :asc (ascending), :desc (descending) .
-- `order_by=lowercase::Function`    -- If `ordered` is `true`, order the resulting files and directories with
-                                       the sort using `order_by` as the sorting keyi: sort(...; by=`order_by`[,...])
-
+# Keyword Arguments
+- `by_depth::Bool=true`                              -- How to traverse the tree: depth-first, or breadth-first.
+- `dprune=::AbstractVector{String}=[raw"^\\.git\$"]` -- A D vector of regular expression strings. This iterator by-passes any git tree.
+- `fprune=::AbstractVector{String}=[raw"^\$"]`       -- A F vector of regular expression strings. This iterator does not filter any files.
+- `ordered::Bool=true`                               -- If `true`, order the resulting files and directories.
+- `order_dir::Symbol=:asc`                           -- Order direction. One of: :asc (ascending), :desc (descending) .
+- `order_by::Function=lowercase`                     -- If `ordered` is `true`, order the resulting files and directories with
+                                                        the sort using `order_by` as the sorting keyi: sort(...; by=`order_by`[,...])
 # Return
 `::DirItr`
 """
