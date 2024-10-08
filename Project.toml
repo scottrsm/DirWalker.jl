@@ -1,12 +1,12 @@
 name = "DirWalker"
 uuid = "1a0cd672-5218-4b50-b7a8-cc4b8a5d9145"
 authors = ["R. Scott McIntire"]
-version = "0.1.4"
+version = "0.1.5"
 
 [deps]
 
 [compat]
-julia = "1.10"
+julia = "1.11"
 
 [extras]
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
