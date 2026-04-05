@@ -24,11 +24,12 @@ export DirItr
 
 # Fields
 - `path     :: String`   --  The absolute path to the root directory.
-- `by_depth :: Bool`     -- The base name of the logical variables.
-- `dprune   :: Regex`    -- The number of variables in the formula.
-- `fprune   :: Regex`    -- The bit vector representing the formula. 
-- `ordered  :: Bool`     -- Is the output of directories and functions ordered.
-- `order_by :: Function` -- If `ordered`, function that determines the ordering.i
+- `by_depth :: Bool`     -- If `true`, traverse depth-first; otherwise, breadth-first.
+- `dprune   :: Regex`    -- A regular expression used to prune (skip) directories.
+- `fprune   :: Regex`    -- A regular expression used to prune (skip) files.
+- `ordered  :: Bool`     -- Is the output of directories and files ordered.
+- `order_dir:: Symbol`   -- Order direction. One of: `:asc` (ascending), `:desc` (descending).
+- `order_by :: Function` -- If `ordered`, function that determines the ordering.
                             This function is used with the `sort` function's `by` argument.
 """
 struct DirItr
@@ -63,7 +64,7 @@ Outer constructor for DirItr.
 """
 function DirItr(p::String; by_depth::Bool=true, dprune::AbstractVector{String}=[raw"^\.git$"],
 		fprune::AbstractVector{String}=[raw"^$"], ordered::Bool=true, order_dir::Symbol=:asc, order_by::Function=lowercase) 
-	in(order_dir, [:asc, :desc]) || throw(ValueError(order_dir, "Parameter `order_dir` should be one of: :asc, :desc"))
+	in(order_dir, [:asc, :desc]) || throw(ArgumentError("Parameter `order_dir` should be one of: :asc, :desc; got: $order_dir"))
 	return DirItr(p, by_depth, Regex(join(dprune, "|")), Regex(join(fprune, "|")), ordered, order_dir, order_by) 
 end
 
@@ -82,30 +83,30 @@ function Base.show(io::IO, di::DirItr)
 		  """                         )
 end
 
-# Size of DirItr iterator.
+# Size and element type of DirItr iterator.
 Base.IteratorSize(::Type{DirItr}) = Base.SizeUnknown()
+Base.eltype(::Type{DirItr}) = String
 
 #= This function determines how the files and directories will
    be gathered up and given to the function get_next_state__.
    The details of this are altered by the attributes in `d`.
 =#
-function gather_files__(di::DirItr                    , 
+function _gather_files(di::DirItr                    , 
 						dir::String                   , 
 						files::Vector{String}=String[], 
 						dirs::Vector{String}=String[]  )
 	# Get the contents of the directory, `dir`.
-	dir = joinpath(di.path, dir)
 	contents = readdir(dir)
 
 	# Group the contents into ndirs and nfiles.
-	ndirs = filter(x -> isdir(joinpath([di.path, dir, x])), contents)
-	if di.dprune != r"^$"
-		ndirs = filter(x -> match(di.dprune, x) == nothing, ndirs )
+	ndirs = filter(x -> isdir(joinpath(dir, x)), contents)
+	if di.dprune.pattern != "^\$"
+		ndirs = filter(x -> match(di.dprune, x) === nothing, ndirs )
 	end
 
-	nfiles = filter(x -> !isdir(joinpath([di.path, dir, x])), contents)
-	if di.fprune != r"^$"
-		nfiles = filter(x -> match(di.fprune, x) == nothing, nfiles)
+	nfiles = filter(x -> !isdir(joinpath(dir, x)), contents)
+	if di.fprune.pattern != "^\$"
+		nfiles = filter(x -> match(di.fprune, x) === nothing, nfiles)
 	end
 
 	# Only return non-trivial values if there is something in the directory.
@@ -121,8 +122,8 @@ function gather_files__(di::DirItr                    ,
 	end
 
 	# Append the directory path to the contents -- so they have absolute paths.
-	ndirs  = [joinpath([di.path, dir, d]) for d in ndirs] 
-	nfiles = [joinpath([di.path, dir, f]) for f in nfiles] 
+	ndirs  = [joinpath(dir, d) for d in ndirs] 
+	nfiles = [joinpath(dir, f) for f in nfiles] 
 
 
 	# Merge the new files and directories with the current ones.
@@ -141,26 +142,31 @@ function gather_files__(di::DirItr                    ,
 	end
 end
 
-#= Recursive function that gets the next file and "state".
+#= Gets the next file and "state".
    Returns `nothing` if there is no next file; or,
    the tuple: (file, (di, files, dirs)).
    This is the form that our version of Base.iterate for `Directory` expects.
 =#
-function get_next_state__(di::DirItr, files::Vector{String}, dirs::Vector{String})
-	if length(files) != 0  
-		file = pop!(files)
-		return (file, (di, files, dirs))
-	else
+function _get_next_state(di::DirItr, files::Vector{String}, dirs::Vector{String})
+	while true
+		if length(files) != 0  
+			file = pop!(files)
+			return (file, (di, files, dirs))
+		end
 		while length(dirs) != 0
 			dir = pop!(dirs)
-			st = gather_files__(di, dir, files, dirs)
+			st = _gather_files(di, dir, files, dirs)
 			if st === nothing
 				continue
 			end
-			return get_next_state__(di, st[1], st[2])
+			files, dirs = st
+			break
+		end
+		# If we exhausted dirs without finding files, we're done.
+		if length(files) == 0
+			return nothing
 		end
 	end
-	return nothing
 end
 
 #= This function gets the next file to return.
@@ -178,16 +184,17 @@ function Base.iterate(di::DirItr)
 	isdir(di.path) || throw("DirItr object, $di, does not have a valid/readable path.")
 
 	# Get the files and sub-directories of `di.path`.
-	files, dirs = gather_files__(di, di.path)
+	result = _gather_files(di, di.path)
 	
-	# If gather_files__ found nothing under d.path, return nothing -- we're done.
-	if files === nothing
+	# If _gather_files found nothing under d.path, return nothing -- we're done.
+	if result === nothing
 		return nothing
 	end
+	files, dirs = result
 
 	# Return the next file and the state, which is of the form:  
 	# (file, (di, files, dirs)) 
-	st = get_next_state__(di, files, dirs)
+	st = _get_next_state(di, files, dirs)
 	if st === nothing
 		return nothing
 	end
@@ -202,7 +209,7 @@ function Base.iterate(di::DirItr, state)
 	files = state[2]
 	dirs = state[3]
 
-	st = get_next_state__(di, files, dirs)
+	st = _get_next_state(di, files, dirs)
 	if st === nothing
 		return nothing
 	end
