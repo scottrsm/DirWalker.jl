@@ -10,211 +10,228 @@ export DirItr
               how the walk should occur.
 
  Example use:
-      d = DirItr("/home/rsm/proj/github/Cluster.jl")
+      d = DirItr(joinpath(homedir(), "proj"))
       for file in d
          println("file = $file")
       end
 =#
 
 """
- The structure is a light-weight handle used to linearize a directory tree starting
- at the absolute path: `path`. This linearization is done by implementing the
- Base.iterate protocol for this struct.
- The other fields determine how the linearization is done.
+    DirItr
+
+The structure is a light-weight handle used to linearize a directory tree starting
+at the path: `path`. This linearization is done by implementing the
+Base.iterate protocol for this struct. Iterating yields the path of every file
+in the tree (each path is `path` joined with the file's relative location).
+The other fields determine how the linearization is done.
 
 # Fields
-- `path     :: String`   --  The absolute path to the root directory.
+- `path     :: String`   -- The path to the root directory.
 - `by_depth :: Bool`     -- If `true`, traverse depth-first; otherwise, breadth-first.
 - `dprune   :: Regex`    -- A regular expression used to prune (skip) directories.
 - `fprune   :: Regex`    -- A regular expression used to prune (skip) files.
 - `ordered  :: Bool`     -- Is the output of directories and files ordered.
 - `order_dir:: Symbol`   -- Order direction. One of: `:asc` (ascending), `:desc` (descending).
-- `order_by :: Function` -- If `ordered`, function that determines the ordering.
+- `order_by :: F`        -- If `ordered`, function that determines the ordering.
                             This function is used with the `sort` function's `by` argument.
+- `follow_symlinks :: Bool` -- If `true`, descend into symbolic links to directories
+                            (each real directory is visited at most once, so cycles are safe).
+                            If `false` (the default), a symbolic link is yielded as a file and not followed.
+- `onerror  :: Union{Nothing, Function}` -- If a directory cannot be read, this function is
+                            called with the `IOError` and the directory is skipped.
+                            If `nothing` (the default), the error is thrown.
 """
-struct DirItr
-	path::String        # Full path to the root directory.
+struct DirItr{F, E}
+	path::String        # Path to the root directory.
 	by_depth ::Bool     # How to do the search of the directory tree. 
 	                    # If `true`, by depth; otherwise, breadth-first search.
 	dprune   ::Regex    # A Regular Expression, used to avoid certain directories.
 	fprune   ::Regex    # A Regular Expression, used to avoid certain files.
 	ordered  ::Bool     # If `true`, order the files and directories.
 	order_dir::Symbol   # Order direction. One of: :asc (ascending), :desc (descending) .
-	order_by ::Function # When sorting (`ordered=true`), use this function with the `sort` function's `by` argument.
+	order_by ::F        # When sorting (`ordered=true`), use this function with the `sort` function's `by` argument.
+	follow_symlinks::Bool # Descend into symbolic links to directories?
+	onerror  ::E        # `nothing`, or a function called with the `IOError` of an unreadable directory.
 end
 
+# A pattern that never matches a directory entry name (entry names are never empty).
+const NO_MATCH = r"^$"
+
+# Join a vector of regular expression strings into one regular expression;
+# an empty vector matches nothing.
+_join_regex(pats::AbstractVector{<:AbstractString}) = isempty(pats) ? NO_MATCH : Regex(join(pats, "|"))
+
 """
-	DirItr(p::String; <key-word-args>)
+	DirItr(path::String; <key-word-args>)
 
 Outer constructor for DirItr.
 
 # Arguments
-- `path :: String`  -- The full path to the root directory.
+- `path :: String`  -- The path to the root directory. Must be a readable directory.
 
 # Keyword Arguments
-- `by_depth::Bool=true`                              -- How to traverse the tree: depth-first, or breadth-first.
-- `dprune=::AbstractVector{String}=[raw"^\\.git\$"]` -- A D vector of regular expression strings. This iterator by-passes any git tree.
-- `fprune=::AbstractVector{String}=[raw"^\$"]`       -- A F vector of regular expression strings. This iterator does not filter any files.
-- `ordered::Bool=true`                               -- If `true`, order the resulting files and directories.
-- `order_dir::Symbol=:asc`                           -- Order direction. One of: :asc (ascending), :desc (descending) .
-- `order_by::Function=lowercase`                     -- If `ordered` is `true`, order the resulting files and directories with
-                                                        the sort using `order_by` as the sorting keyi: sort(...; by=`order_by`[,...])
+- `by_depth::Bool=true`                             -- How to traverse the tree: depth-first, or breadth-first.
+- `dprune::AbstractVector{String}=[raw"^\\.git\$"]` -- A vector of regular expression strings. A directory whose
+                                                       **name** (not its full path) matches any of them is skipped, with
+                                                       everything below it. The default by-passes any git tree.
+                                                       An empty vector prunes nothing.
+- `fprune::AbstractVector{String}=String[]`         -- A vector of regular expression strings. A file whose
+                                                       **name** matches any of them is skipped. The default prunes nothing.
+- `ordered::Bool=true`                              -- If `true`, order the resulting files and directories;
+                                                       otherwise, they are yielded in the order the file system lists them.
+- `order_dir::Symbol=:asc`                          -- Order direction. One of: :asc (ascending), :desc (descending) .
+- `order_by=lowercase`                              -- If `ordered` is `true`, order the resulting files and directories with
+                                                       the sort using `order_by` as the sorting key: sort(...; by=`order_by`[,...])
+- `follow_symlinks::Bool=false`                     -- If `true`, descend into symbolic links to directories (each real
+                                                       directory is visited at most once). If `false`, a symbolic link is
+                                                       yielded as a file and not followed.
+- `onerror=nothing`                                 -- If a directory cannot be read: when `nothing`, the `IOError` is thrown;
+                                                       otherwise `onerror` is called with the error and the directory is skipped.
 # Return
 `::DirItr`
 """
-function DirItr(p::String; by_depth::Bool=true, dprune::AbstractVector{String}=[raw"^\.git$"],
-		fprune::AbstractVector{String}=[raw"^$"], ordered::Bool=true, order_dir::Symbol=:asc, order_by::Function=lowercase) 
-	in(order_dir, [:asc, :desc]) || throw(ArgumentError("Parameter `order_dir` should be one of: :asc, :desc; got: $order_dir"))
-	return DirItr(p, by_depth, Regex(join(dprune, "|")), Regex(join(fprune, "|")), ordered, order_dir, order_by) 
+function DirItr(path::String; by_depth::Bool=true, dprune::AbstractVector{<:AbstractString}=[raw"^\.git$"],
+		fprune::AbstractVector{<:AbstractString}=String[], ordered::Bool=true, order_dir::Symbol=:asc, order_by=lowercase,
+		follow_symlinks::Bool=false, onerror=nothing) 
+	in(order_dir, (:asc, :desc)) || throw(ArgumentError("Parameter `order_dir` should be one of: :asc, :desc; got: $order_dir"))
+	isdir(path) || throw(ArgumentError("DirItr: `path` is not a readable directory: $path"))
+	return DirItr(path, by_depth, _join_regex(dprune), _join_regex(fprune), ordered, order_dir, order_by, follow_symlinks, onerror) 
 end
 
 
-# Show method for DirItr iterator.
-function Base.show(io::IO, di::DirItr) 
+# Compact show method for DirItr iterator (inside containers, error messages, ...).
+Base.show(io::IO, di::DirItr) = print(io, "DirItr(", repr(di.path), ")")
+
+# Verbose show method for DirItr iterator (REPL).
+function Base.show(io::IO, ::MIME"text/plain", di::DirItr) 
 	print(io, 
 		  """DirItr:
-		  \tpath     = $(di.path)
-		  \tby_depth = $(di.by_depth)
-		  \tdprune   = $(di.dprune)
-		  \tfprune   = $(di.fprune)
-		  \tordered  = $(di.ordered)
-		  \torder_dir= $(di.order_dir)
-		  \torder_by = $(di.order_by)
-		  """                         )
+		  \tpath            = $(di.path)
+		  \tby_depth        = $(di.by_depth)
+		  \tdprune          = $(di.dprune)
+		  \tfprune          = $(di.fprune)
+		  \tordered         = $(di.ordered)
+		  \torder_dir       = $(di.order_dir)
+		  \torder_by        = $(di.order_by)
+		  \tfollow_symlinks = $(di.follow_symlinks)
+		  \tonerror         = $(di.onerror)"""  )
 end
 
 # Size and element type of DirItr iterator.
-Base.IteratorSize(::Type{DirItr}) = Base.SizeUnknown()
-Base.eltype(::Type{DirItr}) = String
+Base.IteratorSize(::Type{<:DirItr}) = Base.SizeUnknown()
+Base.eltype(::Type{<:DirItr}) = String
 
-#= This function determines how the files and directories will
-   be gathered up and given to the function get_next_state__.
-   The details of this are altered by the attributes in `d`.
+# The iteration state: files still to yield, directories still to visit,
+# and (when following symbolic links) the real paths of directories already visited.
+struct DirState
+	files  ::Vector{String}
+	dirs   ::Vector{String}
+	visited::Set{String}
+end
+
+# Is this entry a directory we should descend into?
+function _is_walkable_dir(di::DirItr, p::String)
+	if islink(p)
+		return di.follow_symlinks && isdir(p)
+	end
+	return isdir(p)
+end
+
+#= Read the directory `dir` and add its files and sub-directories to the state.
+   The details of this are altered by the attributes in `di`.
+   Returns `false` if the directory could not be read (and `di.onerror` handled it).
 =#
-function _gather_files(di::DirItr                    , 
-						dir::String                   , 
-						files::Vector{String}=String[], 
-						dirs::Vector{String}=String[]  )
-	# Get the contents of the directory, `dir`.
-	contents = readdir(dir)
-
-	# Group the contents into ndirs and nfiles.
-	ndirs = filter(x -> isdir(joinpath(dir, x)), contents)
-	if di.dprune.pattern != "^\$"
-		ndirs = filter(x -> match(di.dprune, x) === nothing, ndirs )
+function _gather_files!(di::DirItr, dir::String, st::DirState)
+	# When following symbolic links, never visit the same real directory twice.
+	if di.follow_symlinks
+		rp = realpath(dir)
+		rp in st.visited && return false
+		push!(st.visited, rp)
 	end
 
-	nfiles = filter(x -> !isdir(joinpath(dir, x)), contents)
-	if di.fprune.pattern != "^\$"
-		nfiles = filter(x -> match(di.fprune, x) === nothing, nfiles)
+	# Get the contents of the directory, `dir` -- sorted only if the output should be ordered.
+	contents = try
+		readdir(dir; sort=di.ordered)
+	catch e
+		(di.onerror !== nothing && e isa Base.IOError) || rethrow()
+		di.onerror(e)
+		return false
 	end
 
-	# Only return non-trivial values if there is something in the directory.
-	if (length(ndirs) + length(nfiles)) == 0
-		return nothing
+	# Group the contents into ndirs and nfiles -- one `stat` per entry.
+	ndirs  = String[]
+	nfiles = String[]
+	for x in contents
+		if _is_walkable_dir(di, joinpath(dir, x))
+			match(di.dprune, x) === nothing && push!(ndirs, x)
+		else
+			match(di.fprune, x) === nothing && push!(nfiles, x)
+		end
 	end
 
 	# Order files and directories.
-	# (Sorted in the opposite way as the files will eventually be popped of a list.)
+	# (Sorted in the opposite way as the files will eventually be popped off a list.)
 	if di.ordered
-		sort!(nfiles, by=di.order_by, rev=di.order_dir === :asc ? true : false)
-		sort!(ndirs,  by=di.order_by, rev=di.order_dir === :asc ? true : false)
+		sort!(nfiles, by=di.order_by, rev=(di.order_dir === :asc))
+		sort!(ndirs,  by=di.order_by, rev=(di.order_dir === :asc))
+	else
+		reverse!(nfiles)
+		reverse!(ndirs)
 	end
 
-	# Append the directory path to the contents -- so they have absolute paths.
+	# Prepend the directory path to the contents -- so they have full paths.
 	ndirs  = [joinpath(dir, d) for d in ndirs] 
 	nfiles = [joinpath(dir, f) for f in nfiles] 
 
-
 	# Merge the new files and directories with the current ones.
-	if length(files) != 0 || length(dirs) != 0
-		if di.by_depth 
-			append!(files, nfiles)
-			append!(dirs, ndirs)
-			return (files, dirs)
-		else
-			append!(nfiles, files)
-			append!(ndirs, dirs)
-			return (nfiles, ndirs)
-		end
+	if di.by_depth 
+		append!(st.files, nfiles)
+		append!(st.dirs, ndirs)
 	else
-		return (nfiles, ndirs)
+		prepend!(st.files, nfiles)
+		prepend!(st.dirs, ndirs)
 	end
+	return true
 end
 
 #= Gets the next file and "state".
    Returns `nothing` if there is no next file; or,
-   the tuple: (file, (di, files, dirs)).
-   This is the form that our version of Base.iterate for `Directory` expects.
+   the tuple: (file, state).
+   This is the form that Base.iterate for `DirItr` expects.
 =#
-function _get_next_state(di::DirItr, files::Vector{String}, dirs::Vector{String})
+function _get_next_state(di::DirItr, st::DirState)
 	while true
-		if length(files) != 0  
-			file = pop!(files)
-			return (file, (di, files, dirs))
+		if !isempty(st.files)
+			return (pop!(st.files), st)
 		end
-		while length(dirs) != 0
-			dir = pop!(dirs)
-			st = _gather_files(di, dir, files, dirs)
-			if st === nothing
-				continue
-			end
-			files, dirs = st
-			break
-		end
-		# If we exhausted dirs without finding files, we're done.
-		if length(files) == 0
-			return nothing
-		end
+		# No files waiting: read the next directory (if any) and try again.
+		isempty(st.dirs) && return nothing
+		_gather_files!(di, pop!(st.dirs), st)
 	end
 end
 
 #= This function gets the next file to return.
    This function is called the first time in the iteration process.
-   It reads the top level directory (specified by d.path) creating
-   a vector of files and directories. It then calls get_next_state__
+   It reads the top level directory (specified by di.path) creating
+   a vector of files and directories. It then calls _get_next_state
    which does the work of producing the next file and updating the state.
-   The state consists of the two vectors: (files, dirs).
-   Returns a two-tuple consisting of the next-file and the "state":
-    ( next_file::String, (di::DirItr, files::Vector{String}, dirs::Vector{String}) )
+   Returns `nothing` if the tree has no files; otherwise a two-tuple consisting
+   of the next-file and the "state": ( next_file::String, state::DirState )
 =#
 function Base.iterate(di::DirItr)
-
 	# First check if the path exists.
-	isdir(di.path) || throw("DirItr object, $di, does not have a valid/readable path.")
+	isdir(di.path) || throw(ArgumentError("DirItr: `path` is not a readable directory: $(di.path)"))
 
-	# Get the files and sub-directories of `di.path`.
-	result = _gather_files(di, di.path)
-	
-	# If _gather_files found nothing under d.path, return nothing -- we're done.
-	if result === nothing
-		return nothing
-	end
-	files, dirs = result
+	st = DirState(String[], String[], Set{String}())
+	_gather_files!(di, di.path, st)
 
-	# Return the next file and the state, which is of the form:  
-	# (file, (di, files, dirs)) 
-	st = _get_next_state(di, files, dirs)
-	if st === nothing
-		return nothing
-	end
-	return st
+	return _get_next_state(di, st)
 end
 
 #= This function gets called on subsequent iterations...
    Returns a two-tuple consisting of the next-file and the "state":
-   ( next_file::String, (di::DirItr, files::Vector{String}, dirs::Vector{String}) )
+   ( next_file::String, state::DirState )
 =#
-function Base.iterate(di::DirItr, state)
-	files = state[2]
-	dirs = state[3]
-
-	st = _get_next_state(di, files, dirs)
-	if st === nothing
-		return nothing
-	end
-	return st
-end
+Base.iterate(di::DirItr, st::DirState) = _get_next_state(di, st)
 
 end # module DirWalker
-

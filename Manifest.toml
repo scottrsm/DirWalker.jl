@@ -1,7 +1,10 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.11.0"
+julia_version = "1.12.7"
 manifest_format = "2.0"
-project_hash = "dc77c3adf06e5d5e0eede695c6c32fc63ca14779"
+project_hash = "6b92155ea60220b89c8228b86c8f9c46b49d45c2"
 
-[deps]
+[[deps.DirWalker]]
+path = "."
+uuid = "1a0cd672-5218-4b50-b7a8-cc4b8a5d9145"
+version = "0.2.0"
