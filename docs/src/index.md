@@ -19,8 +19,9 @@ DirItr
 ## Outer Constructor
 
 ```@docs
-DirItr(p::String; by_depth::Bool=true, dprune::AbstractVector{String}=[raw"^\.git$"],
-		fprune::AbstractVector{String}=[raw"^$"], ordered::Bool=true, order_dir::Symbol=:asc, order_by::Function=lowercase) 
+DirItr(path::String; by_depth::Bool=true, dprune::AbstractVector{<:AbstractString}=[raw"^\.git$"],
+		fprune::AbstractVector{<:AbstractString}=String[], ordered::Bool=true, order_dir::Symbol=:asc, order_by=lowercase,
+		follow_symlinks::Bool=false, onerror=nothing)
 ```
 
 ## Index
